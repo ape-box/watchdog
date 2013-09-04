@@ -14,60 +14,85 @@
 #include <sys/types.h>
 #include <sys/inotify.h>
 #include <limits.h>
-#include <iso646.h>
+#include <dirent.h>
+#include <iso646.h>                                             /* OPTIONAL HEADER for using lessical logical operator */
 
-#define MAX_EVENTS 1024                                     /* Max N° to process */
-#define LEN_NAME   16                                       /* Assuming filename won't exceed 16 Byte */
-#define EVENT_SIZE (sizeof(struct inotify_event))
-#define BUF_LEN    (MAX_EVENTS * (EVENT_SIZE + LEN_NAME))   /* Buffer to store the data of events */
-#define MV_PATH    "--moveto="                              /* Option to move files to path instead of deleting them */
+#define MAX_PATH_LEN   1024                                     /* Max path length */
+#define MAX_SUBDIR_LVL 4                                        /* Max level of subdirectories to watch */
+#define MAX_EVENTS     1024                                     /* Max N° to process */
+#define LEN_NAME       16                                       /* Assuming filename won't exceed 16 Byte */
+#define EVENT_SIZE     (sizeof(struct inotify_event))
+#define BUF_LEN        (MAX_EVENTS * (EVENT_SIZE + LEN_NAME))   /* Buffer to store the data of events */
+#define MV_PATH        "--moveto="                              /* Option to move files to path instead of deleting them */
 
-void usage();                                               /* HELP Function */
-int bark_at(int fd, char *door);                            /* Add watch */
+FILE *fp_log;                                                   /* File pointer for loggin purposes */
+
+void usage();                                                   /* HELP Function */
+int bark_at(int file_descriptor, char *door);                   /* Add watch */
+int[] pin_subdirectories(int file_descriptor, char *root);
 
 int main (int argc, char **argv)
 {
-    int length, wd, fd;
+    int length, watch_descriptor, file_descriptor;
     int ac, i = 0;
     char buffer[BUF_LEN];
     char *tmp_path;
 
-    /* Initialize Inotify */
-    fd = inotify_init();
-    if (fd < 0) {
-        perror("Can't initialize inotify");
-        close(fd);
+    /**
+     * Initialize Inotify
+     */
+    file_descriptor = inotify_init();
+    if (file_descriptor < 0) {
+        perror("inotify init error: ");
+        close(file_descriptor);
         exit(EXIT_FAILURE);
     }
 
+    /**
+     * Argument parsing
+     * -----------------------------------------------------------
+     * maybe in a later time it would be nice to implement getopt
+     */
     for (ac=1;ac<argc;ac++)
     {
+        /**
+         * OPTION: move to path instead of deleting
+         */
         if (0 == strncmp(argv[ac], MV_PATH, sizeof(MV_PATH) -1))
         {
             tmp_path = &argv[ac][sizeof(MV_PATH)-1];
             printf("Set option to move files to %s\n", tmp_path);
             ;/* DA IMPLEMENTARE */
         }
+        /**
+         * OPTION: HELP
+         */
         else if (0 == strcmp(argv[ac], "--help"))
         {
             usage();
-            close(fd);
+            close(file_descriptor);
             exit(EXIT_SUCCESS);
         }
+        /**
+         * OPTION: DEFAULT ADD PATH
+         */
         else
         {
-            /* Add inotify wath to path */
-            bark_at(fd, argv[ac]);
+            /* Add inotify watch to path */
+            bark_at(file_descriptor, argv[ac]);
             printf("Added path: %s\n", argv[ac]);
             ;/* DA IMPLEMENTARE */
         }
     }
 
-    /* Main Loop */
+    /**
+     * Main Loop
+     * ==========================================================================================================
+     */
     while (1)
     {
         i = 0;
-        length = read(fd, buffer, BUF_LEN);
+        length = read(file_descriptor, buffer, BUF_LEN);
 
         if (length < 0) {
             perror("error while reading");
@@ -102,8 +127,8 @@ int main (int argc, char **argv)
     }
 
     /* Clean up */
-    inotify_rm_watch(fd, wd);
-    close(fd);
+    inotify_rm_watch(file_descriptor, watch_descriptor);
+    close(file_descriptor);
 
     exit(EXIT_SUCCESS);
 }
@@ -117,16 +142,33 @@ OPTIONS:\
 \n", MV_PATH);
 }
 
-int bark_at(int fd, char *door)
+/**
+ * Add a inotify watch to path
+ * return the watch descriptor
+ */
+int bark_at(int file_descriptor, char *door)
 {
-    if (-1 == inotify_add_watch(fd, door, IN_CREATE | IN_MODIFY))
+    int watch_descriptor;
+    watch_descriptor = inotify_add_watch(file_descriptor, door, IN_CREATE | IN_MODIFY);
+    if (watch_descriptor == -1)
     {
         printf("Couldn't add watch to %s\n", door);
-        return 1;
     }
     else
     {
         printf("Watching: %s\n", door);
-        return 0;
     }
+
+    return watch_descriptor;
 }
+
+
+/**
+ * Traverse all subdirectories and add a inotify watch to every sub directory
+ * return the list of all watch descriptors
+ */
+int[] pin_subdirectories(int file_descriptor, char *root)
+{
+    ;
+}
+

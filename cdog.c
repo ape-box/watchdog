@@ -17,34 +17,37 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <signal.h>
-#include <iso646.h>                                             /* OPTIONAL HEADER for using lessical logical operator */
+#include <iso646.h>                                               /* OPTIONAL HEADER for using lessical logical operator */
 
-#define MAX_PATH_LEN   1024                                     /* Max path length */
-#define MAX_EVENTS     1024                                     /* Max N° to process */
-#define LEN_NAME       16                                       /* Assuming filename won't exceed 16 Byte */
-#define EVENT_SIZE     (sizeof(struct inotify_event))
-#define BUF_LEN        (MAX_EVENTS * (EVENT_SIZE + LEN_NAME))   /* Buffer to store the data of events */
-#define OPT_MV_PATH    "--moveto="                              /* Option to move files to path instead of deleting them */
-#define OPT_LOG_NAME   "--logto="                               /* Option to specify log file */
+#define MAX_EVENTS       1024                                     /* Max N° to process */
+#define LEN_NAME         16                                       /* Assuming filename won't exceed 16 Byte */
+#define EVENT_SIZE       (sizeof(struct inotify_event))
+#define BUF_LEN          (MAX_EVENTS * (EVENT_SIZE + LEN_NAME))   /* Buffer to store the data of events */
+#define OPT_MV_PATH      "--moveto="                              /* Option to move files to path instead of deleting them */
+#define OPT_LOG_NAME     "--logto="                               /* Option to specify log file */
+#define LOG_NAME_DEFAULT "watchdog.log"                           /* Option to specify log file */
 
-FILE *fp_log = NULL;                                            /* File pointer for loggin purposes */
-char *fp_log_name = "watchdog.log";                             /* Log default filename */
+FILE *fp_log = NULL;                                              /* File pointer for loggin purposes */
+char *fp_log_name = LOG_NAME_DEFAULT;                             /* Log default filename */
 
-int wd_poll[MAX_EVENTS];                                        /* All watchers poll */
-char* wd_path[MAX_EVENTS];                                       /* All watchers paths */
-int wd_index = -1;                                              /* Watch counter */
+int wd_poll[MAX_EVENTS];                                          /* All watchers poll */
+char* wd_path[MAX_EVENTS];                                        /* All watchers paths */
+int wd_index = -1;                                                /* Watch counter */
 
-int fd_main;                                                    /* Main inotify's file descriptor */
-char *moveto = NULL;                                            /* path to directory where EVENTUALLY store unwanted files */
+int fd_main;                                                      /* Main inotify's file descriptor */
+char *moveto = NULL;                                              /* path to directory where EVENTUALLY store unwanted files */
 
-void usage();                                                   /* HELP Function */
-int bark_at(int file_descriptor, char *door);                   /* Add watch */
-void memorize_wd(int wd, char *path);                           /* Save wd and path relations */
+char *unwanted_files[] = {".gif", ".php"};                        /* ... */
+
+void usage();                                                     /* HELP Function */
+int bark_at(int file_descriptor, char *door);                     /* Add watch */
+void memorize_wd(int wd, char *path);                             /* Save wd and path relations */
 void pin_subdirectories(int file_descriptor, char *root);
 void wdog_log(char *message);
 void wdog_exit_success(char *message);
 void wdog_exit_failure(char *message);
 void clean_garbage();
+char *pathdup_addsubdir(char *path, char* subdir);
 
 void sig_handler(int s)
 {
@@ -64,13 +67,11 @@ void sig_handler(int s)
     }
 }
 
-
 int main (int argc, char **argv)
 {
     int length;
     int ac, i = 0;
     char buffer[BUF_LEN];
-    //char root[MAX_PATH_LEN];
 
     struct sigaction sigIntHandler;
     sigIntHandler.sa_handler = sig_handler;
@@ -81,8 +82,7 @@ int main (int argc, char **argv)
     /**
      * No Arguments ?
      */
-    if (argc == 1)
-    {
+    if (argc == 1) {
         usage();
         exit(EXIT_SUCCESS);
     }
@@ -102,13 +102,23 @@ int main (int argc, char **argv)
             /**
              * if double option: free the first one
              */
-            if (moveto != NULL) free(moveto);
+            if (moveto != NULL) {
+                free(moveto);
+            }
 
             int string_length = strlen(argv[ac]) - strlen(OPT_MV_PATH) + 1;
-            if (argv[ac][strlen(argv[ac]) - 1] != '/') string_length += 1;
+
+            if (argv[ac][strlen(argv[ac]) - 1] != '/') {
+                string_length += 1;
+            }
+
             moveto = (char *) malloc(string_length);
+
             strcpy(moveto, &argv[ac][strlen(OPT_MV_PATH)]);
-            if (argv[ac][strlen(argv[ac]) - 1] != '/') strcat(moveto, "/");
+
+            if (argv[ac][strlen(argv[ac]) - 1] != '/') {
+                strcat(moveto, "/");
+            }
 
             continue;
         }
@@ -135,8 +145,7 @@ int main (int argc, char **argv)
         /**
          * OPTION: HELP
          */
-        if (0 == strcmp(argv[ac], "--help"))
-        {
+        if (0 == strcmp(argv[ac], "--help")) {
             usage();
             exit(EXIT_SUCCESS);
         }
@@ -146,8 +155,7 @@ int main (int argc, char **argv)
      * Setup LOGGER
      */
     fp_log = fopen(fp_log_name, "a");
-    if (fp_log == NULL)
-    {
+    if (fp_log == NULL) {
         printf("Error opening log file \"%s\".\nAll output will be redirected to the stdout\n", fp_log_name);
         fp_log = stdout;
     }
@@ -179,14 +187,20 @@ int main (int argc, char **argv)
     }
 
     /**
-     * Main Loop
-     * ==========================================================================================================
+     * +----------------------------+
+     * |                            |
+     * |     -= | MAIN LOOP | =-    |
+     * |     -------------------    |
+     * |                            |
+     * +----------------------------+
      */
     while (1)
     {
         i = 0;
         length = read(fd_main, buffer, BUF_LEN);
-        if (length < 0) wdog_log("error while reading from inotify buffer\n");
+        if (length < 0) {
+            wdog_log("error while reading from inotify buffer\n");
+        }
 
         while (i < length)
         {
@@ -196,15 +210,48 @@ int main (int argc, char **argv)
 
                 if (event->mask bitand IN_CREATE)
                 {
-                    if (event->mask bitand IN_ISDIR)
-                    {
-                        /**
-                         * Retrive path using the watch descriptor
-                         */
-                        //pin_subdirectories(fd_main, );
-                        printf("The directory %s was Created with WD %d.\n", event->name, event->wd);
+                    /**
+                     * Retrive path using the watch descriptor
+                     */
+                    int j, descriptor_index = -1;
+                    char *new_path, *f_ext = NULL;
+
+                    for (j = 0; j <= wd_index; j++) {
+                        if (wd_poll[j] == event->wd) {
+                            descriptor_index = j;
+                            break;
+                        }
                     }
-                    else printf("The file %s was Created with WD %d\n", event->name, event->wd);
+                    new_path = pathdup_addsubdir(wd_path[descriptor_index], event->name);
+                    f_ext = &new_path[strlen(new_path) - 4];
+
+                    if (event->mask bitand IN_ISDIR) {
+                        wdog_log("Directory created : ");
+                        wdog_log(new_path);
+                        wdog_log("\n");
+
+                        pin_subdirectories(fd_main, new_path);
+                    }
+                    else
+                    {
+                        for (j = 0; j < sizeof(unwanted_files); j++)
+                        {
+                            if (0 == strcmp(f_ext, unwanted_files[j]))
+                            {
+                                wdog_log("----------------------------------------------------------------------------------------------------------\n");
+                                char *message = "ALLERT UNWANTED FILE : %s\n";
+                                char *error = (char *) malloc(strlen(message) + strlen(new_path) + 1);
+                                sprintf(error, message, new_path);
+                                wdog_log(error);
+                                free(error);
+                                wdog_log("----------------------------------------------------------------------------------------------------------\n");
+
+                                unlink(new_path);
+                            }
+                        }
+                    }
+
+                    free(new_path);
                 }
 
                 i += EVENT_SIZE + event->len;
@@ -231,8 +278,7 @@ OPTIONS:\
  */
 int bark_at(int file_descriptor, char *door)
 {
-    if (wd_index == (MAX_EVENTS-1))
-    {
+    if (wd_index == (MAX_EVENTS-1)) {
         wdog_log("MAX_EVENTS reached, can't add more watch descriptors\n");
         return -1;
     }
@@ -266,13 +312,11 @@ void memorize_wd(int wd, char *path)
 {
     wd_index += 1;
 
-    if (wd_index < MAX_EVENTS)
-    {
+    if (wd_index < MAX_EVENTS) {
         wd_poll[wd_index] = wd;
         wd_path[wd_index] = strdup(path);
     }
-    else
-    {
+    else {
         wdog_log("MAX_EVENTS reached, can't add more watch descriptors\n");
     }
 }
@@ -299,22 +343,16 @@ void pin_subdirectories(int file_descriptor, char *root)
     }
 
     watch_descriptor = bark_at(file_descriptor, root);
-    if (watch_descriptor == -1) wdog_exit_failure("unable to add watch");
+    if (watch_descriptor == -1) {
+        wdog_exit_failure("unable to add watch");
+    }
 
     while ((entry = readdir(dp)))
     {
         if ((entry->d_type & DT_DIR) and (0 != strcmp(entry->d_name, ".") and 0 != strcmp(entry->d_name, "..")))
         {
             /* Add watches to the level 1 subdirs */
-            int k = 1;
-            if (root[strlen(root)-1] != '/') k += 1;
-            abs_dir = (char *)malloc(strlen(root) + strlen(entry->d_name) + k);
-
-            strcpy(abs_dir, root);
-            if (root[strlen(root)-1] != '/') strcat(abs_dir, "/");
-
-            strcat(abs_dir, entry->d_name);
-
+            abs_dir = pathdup_addsubdir(root, entry->d_name);
             pin_subdirectories(file_descriptor, abs_dir);
             free(abs_dir);
         }
@@ -325,9 +363,26 @@ void pin_subdirectories(int file_descriptor, char *root)
 
 void wdog_log(char *message)
 {
-    if (fp_log != NULL) fprintf(fp_log, "%s: [%s]\n", message, strerror(errno));
-    else printf("%s: [%s]\n", message, strerror(errno));
+    if (0 != errno)
+    {
+        if (fp_log != NULL) {
+            fprintf(fp_log, "[%s] %s\n", strerror(errno), message);
+        }
+        else {
+            printf("[%s] %s\n", strerror(errno), message);
+        }
+    }
+    else
+    {
+        if (fp_log != NULL) {
+            fprintf(fp_log, "%s", message);
+        }
+        else {
+            printf("%s", message);
+        }
+    }
 
+    // DEBUG PRINTF
     printf("%s", message);
 }
 
@@ -355,9 +410,35 @@ void clean_garbage()
         }
     }
 
-    if (moveto != NULL) free(moveto);
-    //free(fp_log_name);
+    if (moveto != NULL) {
+        free(moveto);
+    }
 
-    if (fp_log != NULL) fclose(fp_log);
+    if (0 != strcmp(fp_log_name, LOG_NAME_DEFAULT)) {
+        free(fp_log_name);
+    }
+
+    if (fp_log != NULL) {
+        fclose(fp_log);
+    }
+
     close(fd_main);
+}
+
+char *pathdup_addsubdir(char *path, char* subdir)
+{
+    int addslash = (path[strlen(path)-1] != '/');
+    char *newpath = NULL;
+    int k = addslash ? 2 : 1;
+
+    newpath = malloc(strlen(path) + strlen(subdir) + k);
+
+    strcpy(newpath, path);
+    if (addslash) {
+        strcat(newpath, "/");
+    }
+
+    strcat(newpath, subdir);
+
+    return newpath;
 }

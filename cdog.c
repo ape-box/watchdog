@@ -16,6 +16,7 @@
 #include <limits.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <signal.h>
 #include <iso646.h>                                             /* OPTIONAL HEADER for using lessical logical operator */
 
 #define MAX_PATH_LEN   1024                                     /* Max path length */
@@ -45,12 +46,37 @@ void wdog_exit_success(char *message);
 void wdog_exit_failure(char *message);
 void clean_garbage();
 
+void sig_handler(int s)
+{
+    switch (s)
+    {
+        case SIGINT:
+        case SIGKILL:
+        case SIGQUIT:
+        case SIGSTOP:
+        case SIGTERM:
+        case SIGTSTP:
+            wdog_exit_success("\n\nExiting process\n\n");
+            break;
+        default:
+            printf("Caught signal %d\n",s);
+            break;
+    }
+}
+
+
 int main (int argc, char **argv)
 {
     int length;
     int ac, i = 0;
     char buffer[BUF_LEN];
     //char root[MAX_PATH_LEN];
+
+    struct sigaction sigIntHandler;
+    sigIntHandler.sa_handler = sig_handler;
+    sigemptyset(&sigIntHandler.sa_mask);
+    sigIntHandler.sa_flags = 0;
+    sigaction(SIGINT, &sigIntHandler, NULL);
 
     /**
      * No Arguments ?
@@ -295,7 +321,6 @@ void pin_subdirectories(int file_descriptor, char *root)
     }
 
     closedir(dp);
-    free(abs_dir);
 }
 
 void wdog_log(char *message)
@@ -310,7 +335,6 @@ void wdog_exit_success(char *message)
 {
     wdog_log(message);
     clean_garbage();
-    puts("Byez!");
     exit(EXIT_SUCCESS);
 }
 
@@ -332,7 +356,7 @@ void clean_garbage()
     }
 
     if (moveto != NULL) free(moveto);
-    free(fp_log_name);
+    //free(fp_log_name);
 
     if (fp_log != NULL) fclose(fp_log);
     close(fd_main);

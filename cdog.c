@@ -5,7 +5,6 @@
  * Alessio Peternelli <alessio.peternelli@gmail.com>
  */
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -27,27 +26,33 @@
 #define OPT_LOG_NAME     "--logto="                               /* Option to specify log file */
 #define LOG_NAME_DEFAULT "watchdog.log"                           /* Option to specify log file */
 
-FILE *fp_log = NULL;                                              /* File pointer for loggin purposes */
-char *fp_log_name = LOG_NAME_DEFAULT;                             /* Log default filename */
+FILE* fp_log = NULL;                                              /* File pointer for loggin purposes */
+char* fp_log_name = LOG_NAME_DEFAULT;                             /* Log default filename */
 
-int wd_poll[MAX_EVENTS];                                          /* All watchers poll */
+int   wd_poll[MAX_EVENTS];                                        /* All watchers poll */
 char* wd_path[MAX_EVENTS];                                        /* All watchers paths */
-int wd_index = -1;                                                /* Watch counter */
+int   wd_index = -1;                                              /* Watch counter */
 
-int fd_main;                                                      /* Main inotify's file descriptor */
-char *moveto = NULL;                                              /* path to directory where EVENTUALLY store unwanted files */
+int   fd_main;                                                    /* Main inotify's file descriptor */
+char* moveto = NULL;                                              /* path to directory where EVENTUALLY store unwanted files */
 
-char *unwanted_files[] = {".gif", ".php"};                        /* ... */
+char* unwanted_files[] = {".gif", ".php"};                        /* ... */
 
-void usage();                                                     /* HELP Function */
-int bark_at(int file_descriptor, char *door);                     /* Add watch */
-void memorize_wd(int wd, char *path);                             /* Save wd and path relations */
-void pin_subdirectories(int file_descriptor, char *root);
-void wdog_log(char *message);
-void wdog_exit_success(char *message);
-void wdog_exit_failure(char *message);
-void clean_garbage();
-char *pathdup_addsubdir(char *path, char* subdir);
+/**
+ * TODO: Reorganize functions, this is too caotic!
+ * ------------------------------------------------------
+ */
+void  usage();                                                    /* HELP Function */
+int   bark_at(int file_descriptor, char* door);                   /* Add watch */
+void  memorize_wd(int wd, char* path);                            /* Save wd and path relations */
+void  forget_wd(int wd);                                          /* remove watcher, free path's memory and reorder stack */
+void  pin_subdirectories(int file_descriptor, char* root);
+void  wdog_log(char* message);
+void  wdog_exit_success(char* message);
+void  wdog_exit_failure(char* message);
+void  clean_garbage();
+char* pathdup_addsubdir(char* path, char* subdir);
+int   find_wd_index(int wd);
 
 void sig_handler(int s)
 {
@@ -67,7 +72,7 @@ void sig_handler(int s)
     }
 }
 
-int main (int argc, char **argv)
+int main (int argc, char** argv)
 {
     int length;
     int ac, i = 0;
@@ -112,7 +117,7 @@ int main (int argc, char **argv)
                 string_length += 1;
             }
 
-            moveto = (char *) malloc(string_length);
+            moveto = (char*) malloc(string_length);
 
             strcpy(moveto, &argv[ac][strlen(OPT_MV_PATH)]);
 
@@ -128,7 +133,7 @@ int main (int argc, char **argv)
          */
         if (0 == strncmp(argv[ac], OPT_LOG_NAME, strlen(OPT_LOG_NAME)))
         {
-            char *tmp_string;
+            char* tmp_string;
 
             tmp_string = strdup(&argv[ac][strlen(OPT_LOG_NAME)]);
             fp_log = fopen(tmp_string, "a");
@@ -165,13 +170,17 @@ int main (int argc, char **argv)
      */
     fd_main = inotify_init();
     if (fd_main < 0) wdog_exit_failure("inotify init error");
+    for (i = 0; i <= MAX_EVENTS; i++) {
+        wd_poll[i] = -1;
+        wd_path[i] = NULL;
+    }
 
     /**
      * Argument parsing for PATH TO WATCH
      * -----------------------------------------------------------
      * maybe in a later time it would be nice to implement getopt
      */
-    for (ac=1;ac<argc;ac++)
+    for (ac = 1; ac < argc; ac++)
     {
         /**
          * SKIP OPTIONS
@@ -207,23 +216,17 @@ int main (int argc, char **argv)
             struct inotify_event *event = (struct inotify_event *) &buffer[i];
             if (event->len)
             {
+                int descriptor_index = -1;
+                char *new_path, *f_ext = NULL;
 
                 if (event->mask bitand IN_CREATE)
                 {
                     /**
                      * Retrive path using the watch descriptor
                      */
-                    int j, descriptor_index = -1;
-                    char *new_path, *f_ext = NULL;
-
-                    for (j = 0; j <= wd_index; j++) {
-                        if (wd_poll[j] == event->wd) {
-                            descriptor_index = j;
-                            break;
-                        }
-                    }
-                    new_path = pathdup_addsubdir(wd_path[descriptor_index], event->name);
-                    f_ext = &new_path[strlen(new_path) - 4];
+                    descriptor_index = find_wd_index(event->wd);
+                    new_path         = pathdup_addsubdir(wd_path[descriptor_index], event->name);
+                    f_ext            = &new_path[strlen(new_path) - 4];
 
                     if (event->mask bitand IN_ISDIR) {
                         wdog_log("Directory created : ");
@@ -234,13 +237,14 @@ int main (int argc, char **argv)
                     }
                     else
                     {
+                        int j;
                         for (j = 0; j < sizeof(unwanted_files); j++)
                         {
                             if (0 == strcmp(f_ext, unwanted_files[j]))
                             {
                                 wdog_log("----------------------------------------------------------------------------------------------------------\n");
-                                char *message = "ALLERT UNWANTED FILE : %s\n";
-                                char *error = (char *) malloc(strlen(message) + strlen(new_path) + 1);
+                                char* message = "ALLERT UNWANTED FILE : %s\n";
+                                char* error   = (char*) malloc(strlen(message) + strlen(new_path) + 1);
                                 sprintf(error, message, new_path);
                                 wdog_log(error);
                                 free(error);
@@ -254,6 +258,10 @@ int main (int argc, char **argv)
                     free(new_path);
                 }
 
+                if (event->mask bitand IN_DELETE and event->mask bitand IN_ISDIR) {
+                    forget_wd(event->wd);
+                }
+
                 i += EVENT_SIZE + event->len;
             }
         }
@@ -263,6 +271,9 @@ int main (int argc, char **argv)
     wdog_exit_success("Exit requested");
 }
 
+/**
+ * Print help message
+ */
 void usage ()
 {
     printf("\
@@ -276,7 +287,7 @@ OPTIONS:\
  * Add a inotify watch to path
  * return the watch descriptor
  */
-int bark_at(int file_descriptor, char *door)
+int bark_at(int file_descriptor, char* door)
 {
     if (wd_index == (MAX_EVENTS-1)) {
         wdog_log("MAX_EVENTS reached, can't add more watch descriptors\n");
@@ -284,11 +295,11 @@ int bark_at(int file_descriptor, char *door)
     }
 
     int watch_descriptor;
-    watch_descriptor = inotify_add_watch(file_descriptor, door, IN_CREATE);
+    watch_descriptor = inotify_add_watch(file_descriptor, door, IN_CREATE bitor IN_DELETE);
     if (watch_descriptor == -1)
     {
-        char *message = "Couldn't add watch to %s\n";
-        char *error = (char *) malloc(strlen(message) + strlen(door) + 1);
+        char* message = "Couldn't add watch to %s\n";
+        char* error = (char*) malloc(strlen(message) + strlen(door) + 1);
         sprintf(error, message, door);
         wdog_log(error);
         free(error);
@@ -297,7 +308,7 @@ int bark_at(int file_descriptor, char *door)
     {
         time_t curtime;
         time (&curtime);
-        char *msg = ctime(&curtime);
+        char* msg = ctime(&curtime);
         msg[strlen(msg)-1] = ' ';
         wdog_log(msg);
         wdog_log(door);
@@ -308,7 +319,11 @@ int bark_at(int file_descriptor, char *door)
     return watch_descriptor;
 }
 
-void memorize_wd(int wd, char *path)
+/**
+ * Add to stack: watch descriptor and path
+ * Increment index
+ */
+void memorize_wd(int wd, char* path)
 {
     wd_index += 1;
 
@@ -326,18 +341,18 @@ void memorize_wd(int wd, char *path)
  * Traverse all subdirectories and add a inotify watch to every sub directory
  * return the list of all watch descriptors
  */
-void pin_subdirectories(int file_descriptor, char *root)
+void pin_subdirectories(int file_descriptor, char* root)
 {
     int watch_descriptor;
-    char *abs_dir;
+    char* abs_dir;
     struct dirent *entry;
     DIR *dp;
 
     dp = opendir(root);
     if (dp == NULL)
     {
-        char *message = "could not open dir %s\n";
-        char *error = (char *) malloc(strlen(message) + strlen(root) + 1);
+        char* message = "could not open dir %s\n";
+        char* error = (char*) malloc(strlen(message) + strlen(root) + 1);
         sprintf(error, message, root);
         wdog_exit_failure(error);
     }
@@ -361,7 +376,12 @@ void pin_subdirectories(int file_descriptor, char *root)
     closedir(dp);
 }
 
-void wdog_log(char *message)
+/**
+ * Log to file or to stout
+ * -----------------------------------------------------------------
+ * TODO: move in file management and change it to lazy mode
+ */
+void wdog_log(char* message)
 {
     if (0 != errno)
     {
@@ -386,27 +406,37 @@ void wdog_log(char *message)
     printf("%s", message);
 }
 
-void wdog_exit_success(char *message)
+/**
+ * Log message, clean garbage and than exit
+ */
+void wdog_exit_success(char* message)
 {
     wdog_log(message);
     clean_garbage();
     exit(EXIT_SUCCESS);
 }
 
-void wdog_exit_failure(char *message)
+/**
+ * Log message, clean garbage and than exit
+ */
+void wdog_exit_failure(char* message)
 {
     wdog_log(message);
     clean_garbage();
     exit(EXIT_FAILURE);
 }
 
+/**
+ * Remove inotidy watchers and free allocated memory
+ */
 void clean_garbage()
 {
     int i = 0;
-    if (wd_path != NULL)
+    if (wd_index >= 0)                    // if we have at least one watcher ...
     {
         for (i = 0; i <= wd_index; i++) {
-            free(wd_path[i]);
+            inotify_rm_watch(fd_main, wd_poll[i]); // remove watcher
+            free(wd_path[i]);             // free path
         }
     }
 
@@ -425,10 +455,13 @@ void clean_garbage()
     close(fd_main);
 }
 
-char *pathdup_addsubdir(char *path, char* subdir)
+/**
+ * Given path, verify for separator, append subidr, return pointer to new allocated memory
+ */
+char* pathdup_addsubdir(char* path, char* subdir)
 {
     int addslash = (path[strlen(path)-1] != '/');
-    char *newpath = NULL;
+    char* newpath = NULL;
     int k = addslash ? 2 : 1;
 
     newpath = malloc(strlen(path) + strlen(subdir) + k);
@@ -442,3 +475,48 @@ char *pathdup_addsubdir(char *path, char* subdir)
 
     return newpath;
 }
+
+/**
+ * Find watcher's index from descriptor
+ */
+int find_wd_index(int wd)
+{
+    int j;
+
+    for (j = 0; j <= wd_index; j++) {
+        if (wd_poll[j] == wd) {
+            return j;
+        }
+    }
+
+    return -1;
+}
+
+/**
+ * Remove inotify watcher, free path's memory, reduce index and reorder stacks
+ */
+void forget_wd(int wd)
+{
+    int descriptor_index;
+
+    descriptor_index = find_wd_index(wd);
+    inotify_rm_watch(fd_main, wd);
+    free(wd_path[descriptor_index]);
+
+    for (; descriptor_index <= wd_index; ++descriptor_index)
+    {
+        wd_poll[descriptor_index - 1] = wd_poll[descriptor_index];
+        wd_path[descriptor_index - 1] = wd_path[descriptor_index];
+    }
+    wd_poll[descriptor_index] = -1;
+    wd_path[descriptor_index] = NULL;
+
+    wd_index -= 1;
+}
+
+
+
+
+
+
+

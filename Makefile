@@ -1,14 +1,17 @@
 CC = gcc
-FILES = src_c/cdog.c src_c/wdlib.c
+FILES = src/cdog.c src_c/wdlib.c
 OUT_EXE = wdog
 
 default: debug
 
 build: $(FILES)
-	$(CC) -o $(OUT_EXE) $(FILES)
+	$(CC) -std=c99 -o $(OUT_EXE) $(FILES)
 
-debug: $(FILES)
-	$(CC) -g -Wall -Werror -o $(OUT_EXE) $(FILES)
+debug: $(FILES) clean
+	$(CC) -std=gnu99 -pedantic-errors -g -Wall -Wextra -Werror -o $(OUT_EXE) $(FILES)
+
+memory-analisys: debug
+	valgrind -v --show-reachable=yes --leak-check=full --track-origins=yes --tool=memcheck ./$(OUT_EXE) /home/alessio/
 
 clean:
 	rm -f *.o core

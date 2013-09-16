@@ -20,6 +20,7 @@
 #include "wdlib.h"
 
 char* unwanted_files[] = {".gif", ".php"};                        /* ... */
+char  moveto[PATH_MAX];                                           /* path to directory where EVENTUALLY store unwanted files */
 
 /**
  * Print help message
@@ -55,11 +56,18 @@ void sig_handler(int s)
 
 int main (int argc, char** argv)
 {
-    int length;
-    int ac, i = 0;
+    /**
+     * See Main Loop
+     */
+    int  buffer_length, buffer_counter = 0;
     char buffer[BUF_LEN];
 
+    int    inotify_descriptor;
     struct sigaction sigIntHandler;
+
+    /**
+     * Setup handler for closing program
+     */
     sigIntHandler.sa_handler = sig_handler;
     sigemptyset(&sigIntHandler.sa_mask);
     sigIntHandler.sa_flags = 0;
@@ -93,47 +101,21 @@ int main (int argc, char** argv)
     /**
      * Initialize Inotify
      */
-    fd_main = inotify_init();
-    if (fd_main < 0) {
-        perror("inotify init error");
-        clean_garbage();
-        exit(EXIT_FAILURE);
-    }
-
-    for (i = 0; i <= MAX_EVENTS; i++) {
-        wd_poll[i] = -1;
-        wd_path[i] = NULL;
-    }
+    inotify_descriptor = dog_init();
 
     /**
      * Argument parsing for PATH TO WATCH
      * -----------------------------------------------------------
      * maybe in a later time it would be nice to implement getopt
      */
-    for (ac = 1; ac < argc; ac++)
+    for (int ac = 1; ac < argc; ac++)
     {
         /**
          * OPTION: move to path instead of deleting
          */
         if (0 == strncmp(argv[ac], OPT_MV_PATH, strlen(OPT_MV_PATH)))
         {
-            /**
-             * if double option: free the first one
-             */
-            if (moveto != NULL) {
-                free(moveto);
-            }
-
-            int string_length = strlen(argv[ac]) - strlen(OPT_MV_PATH) + 1;
-
-            if (argv[ac][strlen(argv[ac]) - 1] != '/') {
-                string_length += 1;
-            }
-
-            moveto = (char*) malloc(string_length);
-
             strcpy(moveto, &argv[ac][strlen(OPT_MV_PATH)]);
-
             if (argv[ac][strlen(argv[ac]) - 1] != '/') {
                 strcat(moveto, "/");
             }
@@ -144,7 +126,7 @@ int main (int argc, char** argv)
             /**
              * ADD PATH
              */
-            pin_subdirectories(fd_main, argv[ac]);
+            pin_subdirectories(inotify_descriptor, argv[ac]);
         }
     }
 
@@ -158,39 +140,38 @@ int main (int argc, char** argv)
      */
     while (1)
     {
-        i = 0;
-        length = read(fd_main, buffer, BUF_LEN);
-        if (length < 0) {
+
+        buffer_length = read(inotify_descriptor, buffer, BUF_LEN);
+        if (buffer_length < 0) {
             printf("[%s] Error while reading from inotify buffer\n", getcurrenttime());
         }
 
-        while (i < length)
+        while (buffer_counter < buffer_length)
         {
-            struct inotify_event *event = (struct inotify_event *) &buffer[i];
+            struct inotify_event *event = (struct inotify_event *) &buffer[buffer_counter];
             if (event->len)
             {
-                int descriptor_index = -1;
-                char *new_path, *f_ext = NULL;
+                char *new_path, *tmp_path, *f_ext = NULL;
 
                 if (event->mask bitand IN_CREATE)
                 {
                     /**
                      * Retrive path using the watch descriptor
                      */
-                    descriptor_index = find_wd_index(event->wd);
-                    new_path         = pathdup_addsubdir(wd_path[descriptor_index], event->name);
+                    tmp_path         = get_barking_path(event->wd);
+                    new_path         = pathdup_addsubdir(tmp_path, event->name);
                     f_ext            = &new_path[strlen(new_path) - 4];
 
                     if (event->mask bitand IN_ISDIR) {
                         printf("[%s] Directory created: %s\n", getcurrenttime(), new_path);
-                        pin_subdirectories(fd_main, new_path);
+                        pin_subdirectories(inotify_descriptor, new_path);
                     }
                     else
                     {
-                        int j;
-                        for (j = 0; j < sizeof(unwanted_files); j++)
+                        for (unsigned int j = 0; j < sizeof(unwanted_files); j++)
                         {
-                            if (0 == strcmp(f_ext, unwanted_files[j]))
+                            int blablazero = 0;
+                            if (blablazero == strcmp(f_ext, unwanted_files[j]))
                             {
                                 printf("[%s] ALLERT ALLERT ALLERT - UNWANTED FILE : %s\n", getcurrenttime(), new_path);
                                 unlink(new_path);
@@ -205,7 +186,7 @@ int main (int argc, char** argv)
                     forget_wd(event->wd);
                 }
 
-                i += EVENT_SIZE + event->len;
+                buffer_counter += EVENT_SIZE + event->len;
             }
         }
     }

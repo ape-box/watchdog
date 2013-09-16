@@ -19,6 +19,37 @@
 #include <iso646.h>                                               /* OPTIONAL HEADER for using lessical logical operator */
 #include "wdlib.h"
 
+
+int   fd_main;                                                    /* Main inotify's file descriptor */
+int   wd_poll[MAX_EVENTS];                                        /* All watchers poll */
+char* wd_path[MAX_EVENTS];                                        /* All watchers paths */
+int   wd_index = -1;                                              /* Watch counter */
+
+
+int dog_init()
+{
+    /**
+     * Initialize Inotify
+     */
+    fd_main = inotify_init();
+    if (fd_main < 0) {
+        perror("inotify init error");
+        clean_garbage();
+        exit(EXIT_FAILURE);
+    }
+
+    /**
+     * Initialize wd stacks
+     */
+    for (int i = 0; i <= MAX_EVENTS; i++) {
+        wd_poll[i] = -1;
+        wd_path[i] = NULL;
+    }
+
+    return fd_main;
+}
+
+
 /**
  * Add a inotify watch to path
  * return the watch descriptor
@@ -128,15 +159,23 @@ char* pathdup_addsubdir(char* path, char* subdir)
  */
 int find_wd_index(int wd)
 {
-    int j;
-
-    for (j = 0; j <= wd_index; j++) {
+    for (int j = 0; j <= wd_index; j++) {
         if (wd_poll[j] == wd) {
             return j;
         }
     }
 
     return -1;
+}
+
+/**
+ * Proxy to wd_path
+ */
+char* get_barking_path(int wd)
+{
+    int index = find_wd_index(wd);
+
+    return wd_path[index];
 }
 
 /**
@@ -167,17 +206,16 @@ void forget_wd(int wd)
  */
 void clean_garbage()
 {
-    int i = 0;
-    if (wd_index >= 0)                    // if we have at least one watcher ...
+    if (wd_index >= 0)                                 // if we have at least one watcher ...
     {
-        for (i = 0; i <= wd_index; i++) {
-            inotify_rm_watch(fd_main, wd_poll[i]); // remove watcher
-            free(wd_path[i]);             // free path
+        for (int i = 0; i <= wd_index; i++) {
+            if (wd_poll[i] >= 0) {
+                inotify_rm_watch(fd_main, wd_poll[i]); // remove watcher
+            }
+            if (wd_path[i] != NULL) {
+                free(wd_path[i]);                      // free path
+            }
         }
-    }
-
-    if (moveto != NULL) {
-        free(moveto);
     }
 
     close(fd_main);
@@ -186,7 +224,11 @@ void clean_garbage()
 char* getcurrenttime()
 {
     time_t curtime;
-    time (&curtime);
+    char* buffer;
 
-    return ctime(&curtime);
+    time (&curtime);
+    buffer = ctime(&curtime);
+    buffer[strlen(buffer)-1] = ';';
+
+    return buffer;
 }

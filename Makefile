@@ -1,5 +1,5 @@
 CC = gcc
-FILES = src/cdog.c src_c/wdlib.c
+FILES = src/cdog.c src/wdlib.c
 OUT_EXE = wdog
 
 default: debug
